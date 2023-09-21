@@ -16,3 +16,4 @@ tqdm
 googlemaps
 webdriver_manager
 pandas
+lxml

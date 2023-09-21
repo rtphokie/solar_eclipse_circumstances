@@ -5,20 +5,40 @@ from pprint import pprint
 
 import pandas as pd
 from numpy import arcsin
-from skyfield.api import Topos, Loader
+from skyfield.api import Topos, Loader, load
+ts = load.timescale()
 
 # https://github.com/skyfielders/python-skyfield/issues/445
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
-load = Loader("/var/data")
-planets = load('de421.bsp')
-ts = load.timescale()
+
 MOON_RADIUS_KM = 1737.4
 SUN_RADIUS_KM = 695700
 
 
 # url = f"http://xjubier.free.fr/php/xSE_5MCSE_Location_Search.php?FY=1000&TY=1299&ET=T&IS=0&Lat=35.77&Lng=78.63&ES=DateUp&Lang=en&Index=2&Last=7"
 # url = f"http://xjubier.free.fr/php/xSE_EclipseInfos.php?Ec=1&Ecl[]=+10000407&Lang=en"
+
+def load_ephemeris(year=2023):
+    load = Loader("/var/data")  # centralize local caching of ephemeris files
+    if 1899 < year < 2053:
+        de = 'de421.bsp'
+    # elif -3000 < year < 3000:
+    #     de = 'de406.bsp'
+    # elif 1549 < year < 2650:
+    #     supplants DE430
+    #     documentation: https://doi.org/10.3847/1538-3881/abd414
+        # de = 'de440.bsp'
+    elif -13200 < year < 17191:
+        # supplants DE431
+        # documentation: https://doi.org/10.3847/1538-3881/abd414
+        de = 'de406.bsp'
+    else:
+        raise ValueError(f"unable to find a JPL Lunar Ephemeride for the year {year}")
+        # de='de422.bsp'
+    eph = load(de)
+    print(de)
+    return eph
 
 
 def check_non_zero(x):
@@ -68,39 +88,83 @@ def alt_az_dist(df, body, label):
     df[f'{label}_az'] = az.degrees
     df[f'{label}_dist'] = distance.km
 
-def ase_circumstances(start, lat, lon, ele=100, end=None):
-    return circumstances(start=start, lat=lat, lon=lon, ele=100, end=end, eclipsetype='annular')
 
-def tse_circumstances(start, lat, lon, ele=100, end=None):
-    return circumstances(start=start, lat=lat, lon=lon, ele=100, end=end, eclipsetype='total')
+def circumstances(start, lat, lon, ele=100, end=None, tzstring=None, eph=None):
+    '''
+    Calculates local circumstances of an eclipse returning datetimes (UTC) for partial
+    eclipse contact points (c1 and c4), the moment of maxium eclipse, along with contact
+    points for total or annular eclipse as appropraite.
 
-def circumstances(start, lat, lon, ele=100, end=None ,eclipsetype=None):
+    :param start: the date and time to start searching for an eclipse (datetime, required)
+                  when end is None, this is treated as a mid point of a search beginning 00:00 UTC
+                  the previous day, ending 00:00 UTC the following day
+    :param lat: latitude in degrees (float, positive north, negative south)
+    :param lon: longitude in degrees (float, positive east, negative west)
+    :param ele: elevation in meters (int)
+    :param end: date and time to end search (datetime, default None)
+    :param tzstring: converts UTC to local for all datetimes (optional, example 'US/Eastern')
+    :return: for each of the 5 circumstances, a pandas series is returned:
+        a da
+
+        c1:  beginning of partial eclipse
+        c2:  beginning of total or annular eclipse (or None outside of path of totality/annularity)
+        mid: moment of maximum eclipse
+        c3:  end of total or annular eclipse (or None outside of path of totality/annularity)
+        c4:  end of partial eclipse
+
+    '''
+
+    year=int(start.utc_strftime('%Y'))
+    month=int(start.utc_strftime('%-m'))
+    day=int(start.utc_strftime('%-d'))
+    hour=int(start.utc_strftime('%-H'))
+    minute=int(start.utc_strftime('%-M'))
+    second=int(start.utc_strftime('%-S'))
+    if eph is None:
+        eph = load_ephemeris(year)
     if end is None:
-        time = ts.utc(start.year, start.month, start.day, 0, range(-2160,
-                                                                   2160))  # 3 day span centered on midnight UTC on the day passed, in minute increments.
+        # all we have is a day, so let look across all minutes across a
+        # 2 day span centered on noon UTC on the day passed
+        time = ts.utc(year, month, day, 12, range(-1440, 1440))
     else:
-        timespan_sec = (end - start).seconds
-        time = ts.utc(start.year, start.month, start.day, start.hour, start.minute,
-                      range(start.second - 120, start.second + timespan_sec + 120))
-    time_first = time[0].utc_jpl()
-    time_last = time[-1].utc_jpl()
+        # second level resolution across entire eclipse
+        timespan_sec=(end-start)*86400
+        startsec=int(second)-60 # 1 minutes before C1
+        endsec=int(second+60+timespan_sec) # 1 minute after C4
+        time = ts.utc(year, month, day, hour, minute, range(startsec, endsec))
 
-    place = planets['earth'] + Topos(lat, lon, elevation_m=ele)
+    # build data frame from those times
+    df = pd.DataFrame({
+                       'ordinal': time.toordinal(), # needed really only for testing against other calculations
+                       # 'utc_iso': time.utc_iso(),
+                       'tt': list(time)})
 
-    moon = place.at(time).observe(planets['moon']).apparent()
-    sun = place.at(time).observe(planets['sun']).apparent()
+    place = eph['earth'] + Topos(lat, lon, elevation_m=ele)
 
-    df = pd.DataFrame(list(time.utc_datetime()), columns=['datetime'])
+    # get position of Moon and Sun at each time
+    moon = place.at(time).observe(eph['moon']).apparent()
+    sun = place.at(time).observe(eph['sun']).apparent()
+
+    # add a column for angular separation of the Moon and Sun
     df['separation'] = moon.separation_from(sun).degrees
+
+    # lets get the lunar and solar distance... that might be useful
     alt_az_dist(df, moon, 'moon')
     alt_az_dist(df, sun, 'sun')
+
+    # and the apparant radius, which provides the ratio, we'll need that
     apparant_radius(df)
+
+    # calculate how much of the Sun's disk is eclipsed by the Moon
     df['eclipse_fraction'] = df.apply(lambda x: eclipse_fraction(x['separation'], x['sun_r'], x['moon_r']), axis=1)
-    c1, c2, mid_eclipse,  c3, c4 = contact_points(df)
+
+    # now we can find when the partial (and if applicable total or annular) eclipses begin and end as well as the midpoint
+    c1, c2, mid_eclipse, c3, c4 = contact_points(df)
+
     if end is None and c1 is not None:
-        c1, c2, mid_eclipse, c3, c4 = tse_circumstances(c1.datetime, lat, lon,
-                                                                     end=c4.datetime)  # refine at higher resolution
-    return  c1, c2, mid_eclipse,  c3, c4
+        # repeat at second resolution from C1 to C4
+        c1, c2, mid_eclipse, c3, c4 = circumstances(c1.tt, lat, lon, end=c4.tt, eph=eph)  # refine at higher resolution
+    return c1, c2, mid_eclipse, c3, c4
 
 
 def contact_points(df):
@@ -117,116 +181,22 @@ def contact_points(df):
     df_eclipsed = df[(df.eclipse_fraction > 0)]
     max_eclipse_fraction = df.eclipse_fraction.max()
     df_eclipsed_max = df[(df.eclipse_fraction == max_eclipse_fraction)]
-    c1, c2, max_eclipse, c3, c4 = None, None, None, None, None
+    c1, c2, mid_eclipse, c3, c4 = None, None, None, None, None
     if len(df_eclipsed) > 0:
-        c1 = df_eclipsed[df_eclipsed.datetime == df_eclipsed.datetime.min()].iloc[0]
-        c4 = df_eclipsed[df_eclipsed.datetime == df_eclipsed.datetime.max()].iloc[0]
+        c1 = df_eclipsed.loc[df_eclipsed.ordinal.idxmin()] # earliest time Sun is obscured
+        c4 = df_eclipsed.loc[df_eclipsed.ordinal.idxmax()] # latest time
         if max_eclipse_fraction > 1:
-            c2 = df_eclipsed_max[df_eclipsed_max.datetime == df_eclipsed_max.datetime.min()].iloc[0]
-            c3 = df_eclipsed_max[df_eclipsed_max.datetime == df_eclipsed_max.datetime.max()].iloc[0]
-        midpoint = round(len(df_eclipsed_max)/2)
+            c2 = df_eclipsed_max.loc[df_eclipsed_max.ordinal.idxmin()] # earliest time when Sun is 100% obscured
+            c3 = df_eclipsed_max.loc[df_eclipsed_max.ordinal.idxmax()] # latest  time
+            # c2 = df_eclipsed_max[df_eclipsed_max.datetime == df_eclipsed_max.datetime.min()].iloc[0]
+            # c3 = df_eclipsed_max[df_eclipsed_max.datetime == df_eclipsed_max.datetime.max()].iloc[0]
+        midpoint = round(len(df_eclipsed_max) / 2)
         mid_eclipse = df_eclipsed_max.iloc[midpoint]
 
     return c1, c2, mid_eclipse, c3, c4
 
 
-class MyTestCase(unittest.TestCase):
 
-    def test_20240408_seattle(self):
-        c1, c2, max_eclipse, c3, c4, df = tse_circumstances(datetime.datetime(2024, 4, 8), 47.55414, -122.28822)
-        pprint(max_eclipse)
-        print(df.eclipse_fraction.max())
-
-    def test_20240408_in_path(self):
-        # 40° 49' 02.57" N	  ↔  	40.81738°	    	3m56.0s (total eclipse)
-        # 3m56.5s (lunar limb corrected)
-        # 83° 30' 12.49" W	  ↔  	-83.50347°
-        # Umbral depth : 99.98%
-        # Path width : 181.7km
-        # Obscuration : 100.00%
-        # C3
-        #  	Magnitude at maximum : 1.02660
-        # Moon/Sun size ratio : 1.05322
-        # Umbral velocity : 0.938km/s
-        # Event (ΔT=69.2s)	Date	Time (UT)	Alt	Azi	P	V	LC
-        # Start of partial eclipse (C1) : 	2024/04/08	17:55:53.0	+56.5°	189.1°	230°	04.5
-        # Start of total eclipse (C2) : 	2024/04/08	19:10:42.0	+50.6°	219.0°	052°	11.2	-0.5s
-        # Maximum eclipse (MAX) : 	2024/04/08	19:12:40.1	+50.4°	219.7°	142°	08.2
-        # End of total eclipse (C3) : 	2024/04/08	19:14:38.0	+50.2°	220.4°	232°	05.3	+0.0s
-        # End of partial eclipse (C4) : 	2024/04/08	20:26:46.5	+39.6°	240.9°	054°	11.6
-        lat = '40.81738 N'
-        lon = '83.50347 W'
-        c1, c2, max_eclipse, c3, c4, df = tse_circumstances(datetime.datetime(2024, 4, 8), lat, lon, ele=276)
-        pd.set_option('display.max_rows', None)
-        c1_jubier = datetime.datetime(2024, 4, 8, 17, 55, 53, 0, tzinfo=datetime.timezone.utc)
-        c1_delta = (c1.datetime - c1_jubier).seconds
-        print('c1', c1_delta, c1.datetime, c1_jubier)
-
-        c2_jubier = datetime.datetime(2024, 4, 8, 19, 10, 42, 0, tzinfo=datetime.timezone.utc)
-        if c2.datetime > c2_jubier:
-            c2_delta = (c2.datetime - c2_jubier).seconds
-        else:
-            c2_delta = (c2_jubier - c2.datetime).seconds
-        print('c2', c2_delta, c2.datetime, c2_jubier)
-        self.assertLessEqual(c2_delta, 10)
-
-        max_jubier = datetime.datetime(2024, 4, 8, 19, 12, 40, 200000, tzinfo=datetime.timezone.utc)
-        if max_eclipse.datetime > max_jubier:
-            max_delta = (max_eclipse.datetime - max_jubier).seconds
-        else:
-            max_delta = (max_jubier - max_eclipse.datetime).seconds
-        print('max', max_delta, max_eclipse.datetime, max_jubier)
-        self.assertLessEqual(max_delta, 10)
-
-        c3_jubier = datetime.datetime(2024, 4, 8, 19, 14, 38, 0, tzinfo=datetime.timezone.utc)
-        if c3.datetime > c3_jubier:
-            c3_delta = (c3.datetime - c3_jubier).seconds
-        else:
-            c3_delta = (c3_jubier - c3.datetime).seconds
-        print('c3', c3_delta, c3.datetime, c3_jubier)
-        self.assertLessEqual(c3_delta, 10)
-
-        c4_jubier = datetime.datetime(2024, 4, 8, 20, 26, 46, 600000, tzinfo=datetime.timezone.utc)
-        if c4.datetime > c4_jubier:
-            c4_delta = (c4.datetime - c4_jubier).seconds
-        else:
-            c4_delta = (c4_jubier - c4.datetime).seconds
-        print('c4', c4_delta, c4.datetime, c4_jubier)
-        self.assertLessEqual(c4_delta, 10)
-
-    def test_20240408_out_of_path(self):
-        c1, c2, max_eclipse, c3, c4, df = tse_circumstances(datetime.datetime(2024, 4, 8), '35.86146 N', '78.71175 W',
-                                                            ele=101)
-
-        pd.set_option('display.max_rows', None)
-        # 17:58:45.6
-        c1_jubier = datetime.datetime(2024, 4, 8, 17, 58, 45, 600000, tzinfo=datetime.timezone.utc)
-        c1_delta = (c1.datetime - c1_jubier).seconds
-        print('c1', c1_delta, c1.datetime, c1_jubier)
-        print()
-        print('c2', c2)
-        print('c2', max_eclipse)
-        self.assertLessEqual(c1_delta, 10)
-        self.assertEqual(c2, None)
-        self.assertEqual(max_eclipse, None)
-        self.assertEqual(c3, None)
-
-        c4_jubier = datetime.datetime(2024, 4, 8, 20, 29, 18, 900000, tzinfo=datetime.timezone.utc)
-        if c4.datetime > c4_jubier:
-            c4_delta = (c4.datetime - c4_jubier).seconds
-        else:
-            c4_delta = (c4_jubier - c4.datetime).seconds
-        self.assertLessEqual(c4_delta, 10)
-
-    def test_20240408_no_eclipse(self):
-        c1, c2, max_eclipse, c3, c4, df = tse_circumstances(datetime.datetime(2024, 4, 8), '60.75046 N', '-142.47609 W',
-                                                            ele=101)
-
-        self.assertEqual(c1, None)
-        self.assertEqual(c2, None)
-        self.assertEqual(max_eclipse, None)
-        self.assertEqual(c3, None)
-        self.assertEqual(c4, None)
 
 
 if __name__ == '__main__':
