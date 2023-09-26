@@ -6,64 +6,74 @@ import requests
 import requests_cache
 from bs4 import BeautifulSoup
 from skyfield import api
-ts = api.load.timescale()
 
-from circumstances import load_ephemeris
+ts = api.load.timescale()
 
 months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 requests_cache.install_cache('caches/jubier_cache.sqlite')  # catch all cache for modules such as googlemaps
 
+''' 
+These tools get circumstances for a given eclipse from two highly respected sources, Javier Xubier personal website
+and Fred Espenak's contributions to the NASA GSFC eclipse website, for comparison with our Skyfield based calculations
+'''
 
-def get_eclipses_from_canon():
-    # https://eclipse.gsfc.nasa.gov/SEcat5/SEcatalog.html
-    # https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html
-    # https://eclipse.gsfc.nasa.gov/SEcat5/SE-1999--1900.html
-    # https://eclipse.gsfc.nasa.gov/SEcat5/SE-1999--1000.html
-    data = []
-    for year in range(-1999, 3000, 100):
-        if year == -99:
-            url = f'https://eclipse.gsfc.nasa.gov/SEcat5/SE{year:05}-{year + 99:04}.html'
-        elif year < 0:
-            url = f'https://eclipse.gsfc.nasa.gov/SEcat5/SE{year:05}-{year + 99:05}.html'
-        else:
-            url = f'https://eclipse.gsfc.nasa.gov/SEcat5/SE{year:04}-{year + 99:04}.html'
-        r = requests.get(url)
-        soup = BeautifulSoup(r.text, 'html.parser')
-        pres = soup.find_all('pre')
-        for n in range(4, len(pres)):
-            #                       TD of
-            # Catalog  Calendar   Greatest          Luna Saros Ecl.               Ecl.            Sun Path  Central
-            # Number     Date      Eclipse    ΔT     Num  Num  Type QLE  Gamma    Mag.   Lat Long Alt Width   Dur.
-            #                                  s                                          °    °    °   km
-            #           1          2          3          4          5          6          7          8          9
-            # 0123456789*0123456789*0123456789*0123456789*0123456789*0123456789*0123456789*0123456789*0123456789*0
-            # 00001 -1999 Jun 12  03:14:51  46438 -49456    5   T   -n  -0.2701  1.0733   6N  33W  74  247  06m37s
-            lines = pres[n].text.split("\n")
-            for line in lines[7:]:
-                if len(line) > 0:
-                    catno = line[:5].strip()
-                    year = line[5:11].strip()
-                    month = line[11:15].strip()
-                    month = int(months.index(month))
-                    day = line[15:18].strip()
-                    lat = line[75:79].strip()
-                    if 'N' in lat:
-                        lat = int(lat[:-1])
-                    elif 'S' in lat:
-                        lat = int(lat[:-1]) * -1
-                    else:
-                        raise ValueError(f" latitude error with {lat}")
-                    lon = line[80:85].strip()
-                    if 'E' in lon:
-                        lon = int(lon[:-1])
-                    elif 'W' in lon:
-                        lon = int(lon[:-1]) * -1
-                    else:
-                        raise ValueError(f" longitude error with {lon}")
+def process(s):
+    soup = BeautifulSoup(s, 'html.parser')
 
-                    data.append(
-                        {'catno': catno, 'year': year, 'month': month, 'day': day, 'ge_lat': lat, 'ge_lon': lon})
-    return data
+    tables = soup.find_all('tr')
+    result = {}
+    headers = ['date', 'eclipse type', 'c1_time', 'c1_sun_alt', 'c2_time', 'mid', 'mid_sun_alt', 'mid_sun_azi',
+               'c3_time', 'c4_time', 'c4_sun_alt', 'mag', 'obs', 'duration']
+    for row in soup.find_all('tr'):
+        cells_data = row.find_all('td')
+        data = []
+        if len(cells_data) > 0:
+            for cell in cells_data:
+                data.append(cell.text)
+            if not data[0].startswith('-'):
+                data[0] = '+' + data[0]
+
+            result[data[0]] = dict(map(lambda i, j: (i, j), headers, data))
+            result[data[0]]['notes'] = []
+            for attr in ['c1', 'mid', 'c4']:
+                if 'r' in result[data[0]][f'{attr}_sun_alt']:
+                    if 'c' in attr:
+                        result[data[0]]['notes'].append(f'partial eclipse in progress at sunrise')
+                    else:
+                        result[data[0]]['notes'].append(f'partial eclipse in progress at sunrise')
+                if 's' in result[data[0]][f'{attr}_sun_alt']:
+                    if 'c' in attr:
+                        result[data[0]]['notes'].append(f'maximum eclipse in progress at sunset')
+                    else:
+                        result[data[0]]['notes'].append(f'maximum eclipse in progress at sunset')
+            year = int(data[0][:5])
+            monthstr = data[0][6:9]
+            month = int(months.index(monthstr))
+            day = int(data[0][11:13])
+
+            ts.utc(2024, 4, 8)
+            ts.utc(-2024, 4, 8)
+
+            for attr in ['c1', 'c2', 'c3', 'c4']:
+                timeattr = f"{attr}_time"
+                if result[data[0]][timeattr] == '-':
+                    result[data[0]][attr] = None
+                else:
+                    jk = result[data[0]][f"{attr}_time"]
+                    print(jk)
+                    if '(' in result[data[0]][f"{attr}_time"]:
+                        HMstr, _ = result[data[0]][f"{attr}_time"].split('(')
+                        H, M = HMstr.split(':')
+                        S = 0
+                    else:
+                        H, M, S = result[data[0]][f"{attr}_time"].split(':')
+                    dt = ts.utc(year, month, day, int(H), int(M), int(S))
+                    result[data[0]][attr] = {'datatime': dt, 'ordinal': dt.toordinal()}
+                    if f'{attr}_sun_alt' in result[data[0]]:
+                        sun_alt = result[data[0]][f'{attr}_sun_alt']
+                        sun_alt = sun_alt.replace('(r)', '').replace('(s)', '')
+                        result[data[0]][attr]['sun_alt'] = float(sun_alt)
+            jkl = data
 
 
 def get_usno_circumstances(lat, lon, eclipse, alt=0, datestr=None):
@@ -111,7 +121,7 @@ def parse_usno(html, datestr):
         else:
             raise ValueError(f"{event} event not handled")
         tt = ts.from_datetime(event_dt)
-        data[c] = {'datetime_utc': event_dt,'ordinal': tt.toordinal(),
+        data[c] = {'datetime_utc': event_dt, 'ordinal': tt.toordinal(),
                    'sun_alt': float(sunalt),
                    'sun_az': float(sunaz),
                    }

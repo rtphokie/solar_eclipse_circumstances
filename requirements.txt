@@ -15,5 +15,6 @@ selenium
 tqdm
 googlemaps
 webdriver_manager
+webdriver_manager
 pandas
 lxml
