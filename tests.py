@@ -17,50 +17,44 @@ pd.set_option('display.max_rows', None)
 class EclipseCircumstances(unittest.TestCase):
     # @unittest.skip('costly')
 
-    def test_get_eclipse_history(self):
-
-        locations = {'Raleigh, NC': {'lat': 35.7945, 'lon': -78.63760, 'ele': 100, 'tz': 'US/Eastern'},
-                     'Charlotte, NC': {'lat': 35.2271, 'lon': -80.8431, 'ele': 230, 'tz': 'US/Eastern'},
-                     'Albuquerque, NM': {'lat': 35.0844, 'lon': -106.6504, 'ele': 1950, 'tz': 'US/Mountain'},
-                     }
-        driver = None
-        for name, v in locations.items():
-            data, driver = gsfc_eclipse_history_for_coordinate(name, v['lat'], v['lon'], ele=v['ele'], driver=driver,
-                                                               tz=v['tz'])
-            for k, v in data['eclipses'].items():
-                if '2023' in k:
-                    print(k, name)
-                    pprint(v['c1'])
-                    pprint(v['c2'])
-
     def test_narative(self):
         canon, otherdates = get_canon_Espenak()
 
         locations = {
-            'Raleigh, NC': {'lat': 35.7945, 'lon': -78.63760, 'ele': 100, 'tz': 'US/Eastern'},
-            'Charlotte, NC': {'lat': 35.2271, 'lon': -80.8431, 'ele': 230, 'tz': 'US/Eastern'},
+            # 'Raleigh, NC': {'lat': 35.7945, 'lon': -78.63760, 'ele': 100, 'tz': 'US/Eastern'},
+            # 'Charlotte, NC': {'lat': 35.2271, 'lon': -80.8431, 'ele': 230, 'tz': 'US/Eastern'},
             'Houston, TX': {'lat': 29.7604, 'lon': -95.3698, 'ele': 15, 'tz': 'US/Central'},
             'Albuquerque, NM': {'lat': 35.0844, 'lon': -106.6504, 'ele': 1950, 'tz': 'US/Mountain'},
         }
 
         driver = None
         for name, v in locations.items():
-            print(name, '-'*20)
-            inpath, nearpath, farpath, driver = localize(name, v['lat'], v['lon'], v['tz'], ele=v['ele'],
-                                                         driver=driver)
+            print()
+            print(name, v['lat'], v['lon'], '-'*20)
+            inpath, nearpath, farpath, ofnotedata, driver = localize(name, v['lat'], v['lon'], v['tz'], ele=v['ele'],
+                                                         driver=driver, usecache=True)
 
-            print('A in path')
-            for k in sorted(inpath['T'].keys()):
-                v=inpath['T'][k]
-                print(k, v['obs'], v['duration'], end=' ')
-                print(f"{v['c1']['local_time']} - {v['c4']['local_time']}")
-            print()
-            print('A near path')
-            for k in sorted(nearpath['T'].keys()):
-                v=nearpath['T'][k]
-                print(k, v['obs'], v['duration'], end=' ')
-                print(f"{v['c1']['local_time']} - {v['c4']['local_time']}")
-            print()
+            for eclipsetype, data in ofnotedata.items():
+                print(eclipsetype, '-'*20)
+                for path in ['in_path', 'near_path']:
+                    print(path)
+                    for attr in ['last', 'next']:
+                        if data[f'{attr}_{path}'] is not None:
+                            print(f"          {attr} {data[f'{attr}_{path}']['c1']['local_iso']} {data[f'{attr}_{path}']['obs']} {data[f'{attr}_{path}']['mapurl']}")
+                        else:
+                            print(f"          {attr} n/a")
+
+            # pprint (ofnotedata)
+
+    def testlkjasdf(self):
+        now =  '~2023-09-27'
+        then = '-1293-07-05'
+        jkl=[now, then]
+
+        print(then < now)
+        pprint(jkl)
+        jkl =  sorted(jkl)
+        pprint(jkl)
 
     @unittest.skip('needs update')
     def test_get_gsfc_canon(self):
