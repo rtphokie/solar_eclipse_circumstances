@@ -7,7 +7,7 @@ import dateutil.parser
 import pandas as pd
 from skyfield import api
 
-from circumstances import gsfc_eclipse_history_for_coordinate, get_canon_GSFC, get_canon_Espenak, localize
+from circumstances import solar_eclipse_local
 from test_tools import get_jubier_circumstances, get_usno_circumstances
 
 ts = api.load.timescale()

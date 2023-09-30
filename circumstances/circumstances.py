@@ -1,5 +1,8 @@
 import datetime
+import logging
 import pickle
+from logging import Formatter
+from logging.handlers import RotatingFileHandler
 from zoneinfo import ZoneInfo
 
 import dateutil.parser
@@ -10,10 +13,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 from skyfield.api import load
+from timezonefinder import TimezoneFinder
 
 from utils import get_driver, directional_DMS_coordinates
 
 ts = load.timescale()
+tf = TimezoneFinder()  # reuse
 
 # https://github.com/skyfielders/python-skyfield/issues/445
 pd.set_option('display.max_columns', None)
@@ -29,39 +34,126 @@ months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oc
 # url = f"http://xjubier.free.fr/php/xSE_5MCSE_Location_Search.php?FY=1000&TY=1299&ET=T&IS=0&Lat=35.77&Lng=78.63&ES=DateUp&Lang=en&Index=2&Last=7"
 # url = f"http://xjubier.free.fr/php/xSE_EclipseInfos.php?Ec=1&Ecl[]=+10000407&Lang=en"
 
+class solar_eclipse_local(object):
 
-def gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=0, driver=None, usecache=True, row=None, column=None):
-    # filename_pickle = 'caches/gsfc_solar_eclipse_history_local.pickle'
-    lat = round(lat, 2)
-    lon = round(lon, 2)
-    coords = f"{lat},{lon},{ele}"
-    filename_pickle = f'caches/gsfc_local/{round(lat)},{round(lon)}.pickle'
-    try:
-        fp = open(filename_pickle, 'rb')
-        data = pickle.load(fp)
-        fp.close()
-    except Exception as e:
-        data = {}
-        # raise
-    if coords in data.keys() and usecache:
-        return data[coords], driver
+    def __init__(self, name, lat, lon, ele=None, timezone=None, places=2,
+                 logginglevel=logging.INFO):
+        self.name = name
+        self.lat = round(lat, places)
+        self.lon = round(lon, places)
+        self.ele = ele
+        self.timezone = timezone
+        self.key = None
+        self.cachedir = './caches'
+        self.session = requests_cache.CachedSession(f"{self.cachedir}/http.sqllite")
+        self.logger = self._setup_logging('local', level=logginglevel)
+        self.driver = None
 
-    EW, NS, latd, latm, lats, lond, lonm, lons = directional_DMS_coordinates(lat, lon)
-    url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
-    if driver is None:
-        driver = get_driver()
-    results = {'city': name, 'lat': lat, 'lon': lon, 'ele': ele, 'eclipses': {}}
-    data[coords] = results
+        if self.ele is None:
+            self.ele = self._get_elevation(self.lat, self.lon)
 
-    # driver.get(url)  # bring up the page
-    enter_coordinates(driver, name, latd, latm, lats, NS, lond, lonm, lons, EW)
-    data[coords]['eclipses'].update(click_century_buttons(driver, ele, row=row, column=column))
+        if self.timezone is None:
+            self.timezone = tf.timezone_at(lng=lon, lat=lat)
+            self.logger.debug(f"found {self.name} in the {self.timezone} timezone")
 
-    fp = open(filename_pickle, 'wb')
-    pickle.dump(data, fp)
-    fp.close()
+        self.key = f"{lat},{lon},{ele}"
 
-    return results, driver
+    def _get_elevation(self, lat, lon):
+        url = f'https://api.opentopodata.org/v1/test-dataset?locations={lat},{lon}'
+        r = self.session.get(url)
+        data_elevation = r.json()
+        try:
+            elevation = round(data_elevation['results'][0]['elevation'])
+            self.logger.debug(f"found elevation for {self.name} of {self.ele} meters, from cache {r.from_cache}")
+        except Exception as e:
+            elevation = 0
+            self.logger.warning(f"failed to find elevation for {self.name}: {e}")
+        try:
+            if not r.from_cache:
+                self.logger.warning(f"found elevation for {self.name} not from cache")
+        except Exception:
+            pass
+        return elevation
+
+    def _setup_logging(self, name,
+                       level=logging.WARNING,
+                       logformat="[%(asctime)s] %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
+                       datefmt='%Y-%m-%dT%H:%M:%S', ):
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+        formatter = Formatter(logformat, datefmt=datefmt)
+        file_handler = RotatingFileHandler('./logs/local.log', maxBytes=1024, backupCount=5)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        logging.getLogger("requests_cache").setLevel(logging.WARNING)
+        return logger
+
+    def _get_cache_local(self, years=None):
+        filename_pickle = f'caches/gsfc_local/{self.lat},{self.lon}.pickle'
+        years_in_cache = []
+        years_not_in_cache = []
+
+        try:
+            fp = open(filename_pickle, 'rb')
+            data = pickle.load(fp)
+            fp.close()
+        except Exception as e:
+            data = {}
+            self.logger.warning(f"{e}")
+        if self.key not in data:
+            years_not_in_cache = years.copy()
+        else:
+            self.logger.debug(f"{len(data[self.key]['centuries_checked'])} centuries in cache")
+            for year in years:
+                century = int(year / 100)
+                if century in data[self.key]['centuries_checked']:
+                    years_in_cache.append(year)
+                else:
+                    years_not_in_cache.append(year)
+        return data, years_in_cache, years_not_in_cache, filename_pickle
+
+    def get_year(self, years=None, usecache=True, driver=None):
+        # results, driver = self.gsfc_eclipse_history_for_coordinate(self.name, self.lat, self.lon, ele=self.ele,
+        #                                                            driver=self.driver, years=years)
+        # return results, driver
+
+    # def gsfc_eclipse_history_for_coordinate(self, name, lat, lon, ele=0, driver=None, years=None):
+        if years is None:
+            years = list(range(-1401, 3000, 100))
+        data, years_in_cache, years_not_in_cache, filename_pickle = self._get_cache_local(years=years)
+        self.logger.debug(f"{years_in_cache} in cache for {self.name}")
+        self.logger.debug(f"{years_not_in_cache} not in cache for {self.name}")
+
+        if len(years_not_in_cache) > 0:
+            self.logger.info(f"fetching {years_not_in_cache} for {self.name}")
+            EW, NS, latd, latm, lats, lond, lonm, lons = directional_DMS_coordinates(self.lat, self.lon)
+            url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
+            if driver is None:
+                driver = get_driver()
+            if self.key not in data.keys():
+                data[self.key] = {'city': self.name, 'lat': self.lat, 'lon': self.lon, 'ele': self.ele, 'eclipses': {}, 'by_year': {}, 'centuries_checked': []}
+
+            enter_coordinates(driver, self.name, latd, latm, lats, NS, lond, lonm, lons, EW)
+            for year in years_not_in_cache:
+                button_no = int((year / 100) + 15)
+                row = int(button_no / 5) + 2
+                col = (button_no % 5) + 1
+                self.logger.debug(f"fetching {year}, button ({row},{col}) for {self.name}")
+                eclipses, by_year = click_century_buttons(driver, self.ele, row=row, column=col)
+                data[self.key]['eclipses'].update(eclipses)
+                data[self.key]['by_year'].update(by_year)
+                data[self.key]['centuries_checked'].append(int(year / 100))
+
+            fp = open(filename_pickle, 'wb')
+            pickle.dump(data, fp)
+            fp.close()
+
+        return data[self.key], driver
+
+
+class solar_eclipse_canon(object):
+    def __init__(self):
+        pass
 
 
 def click_century_buttons(driver, ele, row=None, column=None):
@@ -77,6 +169,7 @@ def click_century_buttons(driver, ele, row=None, column=None):
         column_last = column
     # click on each century button to perform javascript circumstance calculations
     results = {}
+    by_year = {}
     for row in range(row_first, row_last + 1):
         for column in range(column_first, column_last + 1):
             enter_elevation(column, driver, ele, row)  # this also clears the previous table
@@ -85,9 +178,10 @@ def click_century_buttons(driver, ele, row=None, column=None):
             table = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, 'el_resultstable')))
 
             s = table.get_attribute('innerHTML')
-            eclipse_data = process_gsfc_history_table(s)
+            eclipse_data, year_data = process_gsfc_history_table(s)
             results.update(eclipse_data)
-    return results
+            by_year.update(year_data)
+    return results, by_year
 
 
 def enter_coordinates(driver, name, latd, latm, lats, NS, lond, lonm, lons, EW):
@@ -306,6 +400,7 @@ def process_gsfc_history_table(s):
 
     tables = soup.find_all('tr')
     result = {}
+    by_year = {}
     headers = ['date', 'eclipse type', 'c1_time', 'c1_sun_alt', 'c2_time', 'mid_time', 'mid_sun_alt', 'mid_sun_azi',
                'c3_time', 'c4_time', 'c4_sun_alt', 'mag', 'obs', 'duration']
     for row in soup.find_all('tr'):
@@ -319,8 +414,11 @@ def process_gsfc_history_table(s):
             for attr in ['c1', 'c2', 'mid', 'c3', 'c4']:
                 gsfc_process_local_circ_fields(attr, day, month, result_row, year)
             result[result_row['date']] = result_row
+            if year not in by_year:
+                by_year[year] = {}
+            by_year[year][result_row['date']] = result_row
 
-    return result
+    return result, by_year
 
 
 def gsfc_process_local_circ_fields(attr, day, month, result_row, year):
@@ -410,7 +508,8 @@ def localize(name, lat, lon, tz, ele=0, driver=None, usecache=True, row=None, co
     nearpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
 
     canon, otherdates = get_canon_Espenak()
-    data, driver = gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=ele, driver=driver, usecache=usecache, row=row, column=column)
+    data, driver = gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=ele, driver=driver, usecache=usecache,
+                                                       row=row, column=column)
     for eclipsename, localdata in data['eclipses'].items():
         # these iterate in order, negative years first
 

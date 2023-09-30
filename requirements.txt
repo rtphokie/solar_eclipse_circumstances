@@ -18,3 +18,4 @@ webdriver_manager
 webdriver_manager
 pandas
 lxml
+timezonefinder

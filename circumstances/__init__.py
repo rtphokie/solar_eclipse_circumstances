@@ -1,0 +1,1 @@
+from .circumstances import solar_eclipse_local
