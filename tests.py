@@ -17,13 +17,26 @@ pd.set_option('display.max_rows', None)
 class EclipseCircumstances(unittest.TestCase):
     # @unittest.skip('costly')
 
+    def test_cities(self):
+        locations = {
+        'Raleigh, NC': {'lat': 35.7945, 'lon': -78.63760, 'ele': 100, 'tz': 'US/Eastern'},
+        }
+
+
+        driver=None
+        for name, v in locations.items():
+            inpath, nearpath, farpath, ofnotedata, driver = localize(name, v['lat'], v['lon'], v['tz'], ele=v['ele'],
+                                                                 driver=driver, usecache=True)
+
+        pprint(ofnotedata)
+
     def test_narative(self):
         canon, otherdates = get_canon_Espenak()
 
         locations = {
             # 'Raleigh, NC': {'lat': 35.7945, 'lon': -78.63760, 'ele': 100, 'tz': 'US/Eastern'},
             # 'Charlotte, NC': {'lat': 35.2271, 'lon': -80.8431, 'ele': 230, 'tz': 'US/Eastern'},
-            'Houston, TX': {'lat': 29.7604, 'lon': -95.3698, 'ele': 15, 'tz': 'US/Central'},
+            # 'Houston, TX': {'lat': 29.7604, 'lon': -95.3698, 'ele': 15, 'tz': 'US/Central'},
             'Albuquerque, NM': {'lat': 35.0844, 'lon': -106.6504, 'ele': 1950, 'tz': 'US/Mountain'},
         }
 
@@ -34,15 +47,29 @@ class EclipseCircumstances(unittest.TestCase):
             inpath, nearpath, farpath, ofnotedata, driver = localize(name, v['lat'], v['lon'], v['tz'], ele=v['ele'],
                                                          driver=driver, usecache=True)
 
-            for eclipsetype, data in ofnotedata.items():
-                print(eclipsetype, '-'*20)
-                for path in ['in_path', 'near_path']:
-                    print(path)
-                    for attr in ['last', 'next']:
-                        if data[f'{attr}_{path}'] is not None:
-                            print(f"          {attr} {data[f'{attr}_{path}']['c1']['local_iso']} {data[f'{attr}_{path}']['obs']} {data[f'{attr}_{path}']['mapurl']}")
-                        else:
-                            print(f"          {attr} n/a")
+            print('in   path', len(inpath['A']))
+            print('near path', len(nearpath['A']))
+            total=0
+            for k, v in farpath.items():
+                total+=len(v)
+            for k, v in nearpath.items():
+                total+=len(v)
+            for k, v in inpath.items():
+                total+=len(v)
+            print('total', total)
+
+            for path in ['in_path', 'near_path']:
+                print()
+                print(f"Looking at eclipses passing {path} {name},")
+                for eclipsetype, data in ofnotedata.items():
+                    if data[f'last_{path}'] is None:
+                        print(f" looking back to 1500 BC, a {eclipsetype} has not passed {path} ")
+                    else:
+                        print(f"the last {eclipsetype} was {data[f'last_{path}']['c1']['local_iso']}, ")
+                    if data[f'next_{path}'] is None:
+                        print(f" a {eclipsetype} wont pass again {path} through 3000 AD. ")
+                    else:
+                        print(f"The next will be {data[f'next_{path}']['c1']['local_iso']}. ")
 
             # pprint (ofnotedata)
 

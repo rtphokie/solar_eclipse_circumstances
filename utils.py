@@ -67,7 +67,7 @@ def check_non_zero(x):
 
 def get_driver():
     driver = None
-    os.system("ps -ef | grep -i Chrome | awk '{ print $2 }' | xargs kill")
+    # os.system("ps -ef | grep -i Chrome | awk '{ print $2 }' | xargs kill")
 
     options = webdriver.ChromeOptions()
     # options.add_argument("--headless")
@@ -75,6 +75,8 @@ def get_driver():
     options.add_argument(r"--user-data-dir=/Users/trice/Library/Application Support/Google/Chrome")
     options.add_argument(r'--profile-directory=Profile 10')
     driver = webdriver.Chrome(options=options)
+    url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
+    driver.get(url)
     return driver
 
 def localmeantime(utc, longitude):

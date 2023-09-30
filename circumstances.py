@@ -30,17 +30,17 @@ months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oc
 # url = f"http://xjubier.free.fr/php/xSE_EclipseInfos.php?Ec=1&Ecl[]=+10000407&Lang=en"
 
 
-def gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=0, driver=None, usecache=True):
-    filename_pickle = 'caches/gsfc_solar_eclipse_history_local.pickle'
+def gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=0, driver=None, usecache=True, row=None, column=None):
+    # filename_pickle = 'caches/gsfc_solar_eclipse_history_local.pickle'
     lat = round(lat, 2)
     lon = round(lon, 2)
     coords = f"{lat},{lon},{ele}"
+    filename_pickle = f'caches/gsfc_local/{round(lat)},{round(lon)}.pickle'
     try:
         fp = open(filename_pickle, 'rb')
         data = pickle.load(fp)
         fp.close()
     except Exception as e:
-        print('gsfc_eclipse_history cache read error')
         data = {}
         # raise
     if coords in data.keys() and usecache:
@@ -53,9 +53,9 @@ def gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=0, driver=None, usec
     results = {'city': name, 'lat': lat, 'lon': lon, 'ele': ele, 'eclipses': {}}
     data[coords] = results
 
-    driver.get(url)  # bring up the page
+    # driver.get(url)  # bring up the page
     enter_coordinates(driver, name, latd, latm, lats, NS, lond, lonm, lons, EW)
-    data[coords]['eclipses'].update(click_century_buttons(driver, ele))
+    data[coords]['eclipses'].update(click_century_buttons(driver, ele, row=row, column=column))
 
     fp = open(filename_pickle, 'wb')
     pickle.dump(data, fp)
@@ -64,11 +64,21 @@ def gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=0, driver=None, usec
     return results, driver
 
 
-def click_century_buttons(driver, ele):
+def click_century_buttons(driver, ele, row=None, column=None):
+    if row is None:
+        row_first = 2
+        row_last = 10
+        column_first = 1
+        column_last = 5
+    else:
+        row_first = row
+        row_last = row
+        column_first = column
+        column_last = column
     # click on each century button to perform javascript circumstance calculations
     results = {}
-    for row in range(2, 11):
-        for column in range(1, 6):
+    for row in range(row_first, row_last + 1):
+        for column in range(column_first, column_last + 1):
             enter_elevation(column, driver, ele, row)  # this also clears the previous table
 
             # wait for table to appear
@@ -150,11 +160,11 @@ def get_canon_Espenak(year_start=-1499, year_end=3000, force=False):
                 day = int(atoms[-1])
                 if len(atoms) == 4:
                     year_utc *= -1
-                    sign='-'
+                    sign = '-'
                 else:
-                    sign='+'
+                    sign = '+'
 
-                thisdict['id']=f"{sign}{abs(year_utc):04}{month:02}{day:02}"
+                thisdict['id'] = f"{sign}{abs(year_utc):04}{month:02}{day:02}"
                 H, M, S = thisdict['ge_time_td'].split(':')
                 td = ts.utc(year_utc, month, day, int(H), int(M), int(S))
                 jpl = td.utc_jpl()
@@ -390,8 +400,8 @@ def gsfc_local_history_row(cells_data, headers, result_row):
     return result_row, year, month, day
 
 
-def localize(name, lat, lon, tz, ele=0, driver=None, usecache=True):
-    targetdates={'A': '+2023-10-14', 'T': '+2024-04-08', 'H': '+2023-10-01', 'P': '+2023-10-01'}
+def localize(name, lat, lon, tz, ele=0, driver=None, usecache=True, row=None, column=None):
+    targetdates = {'A': '+2023-10-14', 'T': '+2024-04-08', 'H': '+2023-10-01', 'P': '+2023-10-01'}
     superlatives = {'last_in_path': None, 'last_near_path': None, 'last_best': None,
                     'next_in_path': None, 'next_near_path': None, 'next_best': None}
     prevnextevents = {'A': superlatives.copy(), 'T': superlatives.copy(), 'H': superlatives.copy()}
@@ -400,7 +410,7 @@ def localize(name, lat, lon, tz, ele=0, driver=None, usecache=True):
     nearpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
 
     canon, otherdates = get_canon_Espenak()
-    data, driver = gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=ele, driver=driver, usecache=usecache)
+    data, driver = gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=ele, driver=driver, usecache=usecache, row=row, column=column)
     for eclipsename, localdata in data['eclipses'].items():
         # these iterate in order, negative years first
 
@@ -416,19 +426,18 @@ def localize(name, lat, lon, tz, ele=0, driver=None, usecache=True):
             if localdata[circ] is None:
                 continue
             label = process_local_circ_times(circ, label, localdata, lon, tz)
-            localdata['label']=label
-        eclipseid=label[0]+label[1:11].replace('-', '')
-        # http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3.php?Ecl=-14990802&Acc=2&Umb=1&Lmt=1&Mag=0&Lat=35.75000&Lng=-78.64000
-        # http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3.php?Ecl=-14990801&Acc=2&Umb=1&Lmt=1&Mag=0&Lat=35.7945&Lng=-78.6376&Zoom=7&LC=1'
-        localdata['mapurl']=f"http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3.php?Ecl={canondata['id']}&Acc=2&Umb=1&Lmt=1&Mag=0&Lat={round(lat,2)}&Lng={round(lon,2)}&Zoom=7&LC=1"
-        targetdate=f"{targetdates[baseeclipsetype]}T" # pick eclipse of interest for comparing last and next, T24 is for sorting purposes
+            localdata['label'] = label
+        eclipseid = label[0] + label[1:11].replace('-', '')
+        localdata[
+            'mapurl'] = f"http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3.php?Ecl={canondata['id']}&Acc=2&Umb=1&Lmt=1&Mag=0&Lat={round(lat, 2)}&Lng={round(lon, 2)}&Zoom=7&LC=1"
+        targetdate = f"{targetdates[baseeclipsetype]}T"  # pick eclipse of interest for comparing last and next, T24 is for sorting purposes
         if localdata['duration'] is not None:
             inpath[baseeclipsetype][label] = localdata
             if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(targetdate):
                 prevnextevents[baseeclipsetype]['last_in_path'] = localdata
-            elif prevnextevents[baseeclipsetype]['next_in_path'] is  None and not label.startswith(targetdate):
+            elif prevnextevents[baseeclipsetype]['next_in_path'] is None and not label.startswith(targetdate):
                 prevnextevents[baseeclipsetype]['next_in_path'] = localdata
-        elif localdata['obs'] >= .9:
+        elif localdata['obs'] >= .9 and baseeclipsetype != 'P':
             nearpath[baseeclipsetype][label] = localdata
             if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(targetdate):
                 prevnextevents[baseeclipsetype]['last_near_path'] = localdata
