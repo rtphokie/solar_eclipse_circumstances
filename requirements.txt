@@ -19,3 +19,4 @@ webdriver_manager
 pandas
 lxml
 timezonefinder
+jinja2

@@ -1,8 +1,8 @@
-import os
-
 import pandas as pd
 from selenium import webdriver
 from skyfield.api import Loader, load
+from selenium.webdriver.support.ui import Select, WebDriverWait
+from selenium.webdriver.common.by import By
 
 ts = load.timescale()
 
@@ -13,6 +13,7 @@ pd.set_option('display.width', 1000)
 MOON_RADIUS_KM = 1737.4
 SUN_RADIUS_KM = 695700
 months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+eclipse_abbrev={'A': 'annular', 'T': 'total', 'H': 'hybrid', 'P': 'partial'}
 
 
 def load_ephemeris(year=2023):
@@ -60,7 +61,6 @@ def directional_DMS_coordinates(lat, lon):
         EW = 'E'
     return EW, NS, latd, latm, lats, lond, lonm, lons
 
-
 def check_non_zero(x):
     return x > 0
 
@@ -77,7 +77,10 @@ def get_driver():
     driver = webdriver.Chrome(options=options)
     url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
     driver.get(url)
+    #<input type="text" name="loc_name" size="30" onchange="newloc()">
+    table = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.NAME, 'loc_name')))
     return driver
+
 
 def localmeantime(utc, longitude):
     """
@@ -85,7 +88,6 @@ def localmeantime(utc, longitude):
     :param longitude: longitude
     :return: Local Mean Time Timestamp
     """
-    lmt = utc + datetime.timedelta(seconds=round(4*60*longitude))
+    lmt = utc + datetime.timedelta(seconds=round(4 * 60 * longitude))
     lmt = lmt.replace(tzinfo=None)
     return lmt
-

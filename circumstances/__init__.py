@@ -1,1 +1,2 @@
 from .circumstances import solar_eclipse_local
+from .xavier_circ import get_jubier_circumstances

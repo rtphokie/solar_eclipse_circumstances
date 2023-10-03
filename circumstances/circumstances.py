@@ -31,12 +31,12 @@ months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oc
 
 # useful URLS
 # Xavier Jubier's site
-# url = f"http://xjubier.free.fr/php/xSE_5MCSE_Location_Search.php?FY=1000&TY=1299&ET=T&IS=0&Lat=35.77&Lng=78.63&ES=DateUp&Lang=en&Index=2&Last=7"
+# url = f"http://movingfree.fr/php/xSE_5MCSE_Location_Search.php?FY=1000&TY=1299&ET=T&IS=0&Lat=35.77&Lng=78.63&ES=DateUp&Lang=en&Index=2&Last=7"
 # url = f"http://xjubier.free.fr/php/xSE_EclipseInfos.php?Ec=1&Ecl[]=+10000407&Lang=en"
 
 class solar_eclipse_local(object):
 
-    def __init__(self, name, lat, lon, ele=None, timezone=None, places=2,
+    def __init__(self, name, lat, lon, ele=None, timezone=None, places=2, driver=None,
                  logginglevel=logging.INFO):
         self.name = name
         self.lat = round(lat, places)
@@ -47,7 +47,7 @@ class solar_eclipse_local(object):
         self.cachedir = './caches'
         self.session = requests_cache.CachedSession(f"{self.cachedir}/http.sqllite")
         self.logger = self._setup_logging('local', level=logginglevel)
-        self.driver = None
+        self.driver = driver
 
         if self.ele is None:
             self.ele = self._get_elevation(self.lat, self.lon)
@@ -57,6 +57,8 @@ class solar_eclipse_local(object):
             self.logger.debug(f"found {self.name} in the {self.timezone} timezone")
 
         self.key = f"{lat},{lon},{ele}"
+        self.logger.info('-' * 20)
+        self.logger.info(f"instantiated {self.name} ({self.lat},{self.lon}), ele {self.ele}m in {self.timezone}")
 
     def _get_elevation(self, lat, lon):
         url = f'https://api.opentopodata.org/v1/test-dataset?locations={lat},{lon}'
@@ -112,12 +114,13 @@ class solar_eclipse_local(object):
                     years_not_in_cache.append(year)
         return data, years_in_cache, years_not_in_cache, filename_pickle
 
-    def get_year(self, years=None, usecache=True, driver=None):
-        # results, driver = self.gsfc_eclipse_history_for_coordinate(self.name, self.lat, self.lon, ele=self.ele,
-        #                                                            driver=self.driver, years=years)
-        # return results, driver
-
-    # def gsfc_eclipse_history_for_coordinate(self, name, lat, lon, ele=0, driver=None, years=None):
+    def get_year(self, years):
+        '''
+        fetches eclipses visible for location defined in the object from the
+        the NASA GSFC javascript eclipse site https://eclipse.gsfc.nasa.gov
+        :param years: years to gather eclipses for (default, all years between 1500 BC and 3000 AD)
+        :return: dictionary
+        '''
         if years is None:
             years = list(range(-1401, 3000, 100))
         data, years_in_cache, years_not_in_cache, filename_pickle = self._get_cache_local(years=years)
@@ -128,18 +131,19 @@ class solar_eclipse_local(object):
             self.logger.info(f"fetching {years_not_in_cache} for {self.name}")
             EW, NS, latd, latm, lats, lond, lonm, lons = directional_DMS_coordinates(self.lat, self.lon)
             url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
-            if driver is None:
-                driver = get_driver()
+            if self.driver is None:
+                self.driver = get_driver()
             if self.key not in data.keys():
-                data[self.key] = {'city': self.name, 'lat': self.lat, 'lon': self.lon, 'ele': self.ele, 'eclipses': {}, 'by_year': {}, 'centuries_checked': []}
+                data[self.key] = {'city': self.name, 'lat': self.lat, 'lon': self.lon, 'ele': self.ele, 'eclipses': {},
+                                  'by_year': {}, 'centuries_checked': []}
 
-            enter_coordinates(driver, self.name, latd, latm, lats, NS, lond, lonm, lons, EW)
+            enter_coordinates(self.driver, self.name, latd, latm, lats, NS, lond, lonm, lons, EW)
             for year in years_not_in_cache:
                 button_no = int((year / 100) + 15)
                 row = int(button_no / 5) + 2
                 col = (button_no % 5) + 1
                 self.logger.debug(f"fetching {year}, button ({row},{col}) for {self.name}")
-                eclipses, by_year = click_century_buttons(driver, self.ele, row=row, column=col)
+                eclipses, by_year = click_century_buttons(self.driver, self.ele, row=row, column=col)
                 data[self.key]['eclipses'].update(eclipses)
                 data[self.key]['by_year'].update(by_year)
                 data[self.key]['centuries_checked'].append(int(year / 100))
@@ -148,7 +152,88 @@ class solar_eclipse_local(object):
             pickle.dump(data, fp)
             fp.close()
 
-        return data[self.key], driver
+        return data[self.key]
+
+    def localize(self, years=[2023, 2024]):
+        # name, lat, lon, tz, ele=0, driver=None, usecache=True, row=None, column=None):
+        targetdates = {'A': '+2023-10-14', 'T': '+2024-04-08', 'H': '+2023-10-01', 'P': '+2023-10-01'}
+        superlatives = {'last_in_path': None, 'last_near_path': None,
+                        'next_in_path': None, 'next_near_path': None}
+        prevnextevents = {'A': superlatives.copy(), 'T': superlatives.copy(), 'H': superlatives.copy(),
+                          'any': {'last': None, 'next': None}}
+        farpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
+        inpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
+        nearpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
+
+        canon, otherdates = get_canon_Espenak()
+        data = self.get_year(years)
+        for eclipsename, localdata in data['eclipses'].items():
+            # these iterate in order, negative years first
+
+            if eclipsename in otherdates:
+                canondata = canon[otherdates[eclipsename]]
+            else:
+                print(f"{eclipsename} not found in canon")
+                raise
+            baseeclipsetype = canondata['eclipse_type'][0]
+            label = None
+            for circ in ['c1', 'c2', 'mid', 'c3', 'c4']:
+                # for circ in ['c1']:
+                if localdata[circ] is None:
+                    continue
+                label = process_local_circ_times(circ, label, localdata, self.lon, self.timezone)
+                localdata['label'] = label
+            # eclipseid = label[0] + label[1:11].replace('-', '')
+            localdata[
+                'mapurl'] = f"http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3.php?Ecl={canondata['id']}&Acc=2&Umb=1&Lmt=1&Mag=0&Lat={self.lat}&Lng={self.lon}&Zoom=7&LC=1"
+            self.last_next_eclipses(baseeclipsetype, farpath, inpath, label, localdata, nearpath, prevnextevents,
+                                    targetdates)
+        return inpath, nearpath, farpath, prevnextevents
+
+    def last_next_eclipses(self, baseeclipsetype, farpath, inpath, label, localdata, nearpath, prevnextevents,
+                           targetdates):
+        targetdate = f"{targetdates[baseeclipsetype]}T"  # pick eclipse of interest for comparing last and next, T24 is for sorting purposes
+        if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(targetdate):
+            prevnextevents['any']['last'] = localdata
+        elif prevnextevents['any']['next'] is None and not label.startswith(targetdate):
+            prevnextevents['any']['next'] = localdata
+        if localdata['duration'] is not None:
+            inpath[baseeclipsetype][label] = localdata
+            if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(
+                    targetdate):
+                prevnextevents[baseeclipsetype]['last_in_path'] = localdata
+            elif prevnextevents[baseeclipsetype]['next_in_path'] is None and not label.startswith(targetdate):
+                prevnextevents[baseeclipsetype]['next_in_path'] = localdata
+        elif (baseeclipsetype == 'T' and localdata['obs'] >= .9) or (baseeclipsetype in ['H','A'] and localdata['obs'] >= .8):
+            # total eclipses above 90% obscuration or annular/hybrid above 80%
+            nearpath[baseeclipsetype][label] = localdata
+            if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(
+                    targetdate):
+                prevnextevents[baseeclipsetype]['last_near_path'] = localdata
+            elif prevnextevents[baseeclipsetype]['next_near_path'] is None and not label.startswith(targetdate):
+                prevnextevents[baseeclipsetype]['next_near_path'] = localdata
+        else:
+            farpath[baseeclipsetype][label] = localdata
+
+    def fetch_google_circrequests(selfrequests, eclipse, height, latstr, lonstr):
+        # doc http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3_Help.html
+        url = f'http://xjubier.free.fr/php/GE_xSrequestsE_LocalCircumstances.php?Eclipse={eclipse}&Details=1&Release=100&&HTTPCLIENT=7.3.6.9345,2.2,Google+Earth+Pro,en&BBOX={lonstr},{latstr},{height},0,0'
+        print(url)
+        raise
+        headers = {
+            'Accept': 'application/vnd.google-earth.kml+xml, application/vnd.google-earth.kmz, image/*, */*',
+            'User-Agent': 'GoogleEarth/7.3.6.9345(Macintosh;Mac OS X (13.5.2);en;kml:2.2;client:Pro;type:default)',
+            'Connection': 'Keep-Alive',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'en-US,*'
+        }
+        r = self.session.get(url, headers=headers)
+        if not r.from_cache:
+            print(r.from_cache, url)
+        s = r.text
+        if 'No such solar eclipse' in s:
+            raise ValueError(f"No such eclipse on {eclipse}")
+        return s
 
 
 class solar_eclipse_canon(object):
@@ -454,20 +539,12 @@ def gsfc_process_local_circ_fields(attr, day, month, result_row, year):
 
 
 def eclipse_at_sunriseset(result_row):
-    ''' moves the (r) and (s) notes in obscuration and c times which indicate the event is happening
-        at sunrise or sunset, to notes'''
+    ''' moves the (r) and (s) which indicate the event is happening at sunrise or sunset, to notes'''
+    if '(r)' in result_row['obs']:
+        result_row['notes'].append('underway at sunrise')
+    if '(s)' in result_row['obs']:
+        result_row['notes'].append('underway at sunset')
     result_row['obs'] = float(result_row['obs'].replace('(r)', '').replace('(s)', ''))
-    for attr in ['c1', 'mid', 'c4']:
-        if 'r' in result_row[f'{attr}_sun_alt']:
-            if 'c' in attr:
-                result_row['notes'].append(f'partial eclipse in progress at sunrise')
-            else:
-                result_row['notes'].append(f'partial eclipse in progress at sunrise')
-        if 's' in result_row[f'{attr}_sun_alt']:
-            if 'c' in attr:
-                result_row['notes'].append(f'maximum eclipse in progress at sunset')
-            else:
-                result_row['notes'].append(f'maximum eclipse in progress at sunset')
 
 
 def gsfc_local_history_row(cells_data, headers, result_row):
@@ -498,69 +575,15 @@ def gsfc_local_history_row(cells_data, headers, result_row):
     return result_row, year, month, day
 
 
-def localize(name, lat, lon, tz, ele=0, driver=None, usecache=True, row=None, column=None):
-    targetdates = {'A': '+2023-10-14', 'T': '+2024-04-08', 'H': '+2023-10-01', 'P': '+2023-10-01'}
-    superlatives = {'last_in_path': None, 'last_near_path': None, 'last_best': None,
-                    'next_in_path': None, 'next_near_path': None, 'next_best': None}
-    prevnextevents = {'A': superlatives.copy(), 'T': superlatives.copy(), 'H': superlatives.copy()}
-    farpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
-    inpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
-    nearpath = {'A': {}, 'T': {}, 'P': {}, 'H': {}}
-
-    canon, otherdates = get_canon_Espenak()
-    data, driver = gsfc_eclipse_history_for_coordinate(name, lat, lon, ele=ele, driver=driver, usecache=usecache,
-                                                       row=row, column=column)
-    for eclipsename, localdata in data['eclipses'].items():
-        # these iterate in order, negative years first
-
-        if eclipsename in otherdates:
-            canondata = canon[otherdates[eclipsename]]
-        else:
-            print(f"{eclipsename} not found in canon")
-            raise
-        baseeclipsetype = canondata['eclipse_type'][0]
-        label = None
-        for circ in ['c1', 'c2', 'mid', 'c3', 'c4']:
-            # for circ in ['c1']:
-            if localdata[circ] is None:
-                continue
-            label = process_local_circ_times(circ, label, localdata, lon, tz)
-            localdata['label'] = label
-        eclipseid = label[0] + label[1:11].replace('-', '')
-        localdata[
-            'mapurl'] = f"http://xjubier.free.fr/en/site_pages/solar_eclipses/xSE_GoogleMap3.php?Ecl={canondata['id']}&Acc=2&Umb=1&Lmt=1&Mag=0&Lat={round(lat, 2)}&Lng={round(lon, 2)}&Zoom=7&LC=1"
-        targetdate = f"{targetdates[baseeclipsetype]}T"  # pick eclipse of interest for comparing last and next, T24 is for sorting purposes
-        if localdata['duration'] is not None:
-            inpath[baseeclipsetype][label] = localdata
-            if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(targetdate):
-                prevnextevents[baseeclipsetype]['last_in_path'] = localdata
-            elif prevnextevents[baseeclipsetype]['next_in_path'] is None and not label.startswith(targetdate):
-                prevnextevents[baseeclipsetype]['next_in_path'] = localdata
-        elif localdata['obs'] >= .9 and baseeclipsetype != 'P':
-            nearpath[baseeclipsetype][label] = localdata
-            if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(targetdate):
-                prevnextevents[baseeclipsetype]['last_near_path'] = localdata
-            elif prevnextevents[baseeclipsetype]['next_near_path'] is None and not label.startswith(targetdate):
-                prevnextevents[baseeclipsetype]['next_near_path'] = localdata
-        else:
-            farpath[baseeclipsetype][label] = localdata
-            # if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~'):
-            #     if prevnextevents[baseeclipsetype]['last_best'] is None or prevnextevents[baseeclipsetype]['last_best']['obs'] < localdata['obs']:
-            #         prevnextevents[baseeclipsetype]['last_best'] = localdata
-            # else:
-            #     if prevnextevents[baseeclipsetype]['next_best'] is None or prevnextevents[baseeclipsetype]['next_best']['obs'] < localdata['obs']:
-            #         prevnextevents[baseeclipsetype]['next_best'] = localdata
-
-    return inpath, nearpath, farpath, prevnextevents, driver
-
-
 def process_local_circ_times(circ, label, localdata, lon, tz):
     year = int(localdata[circ]['utc_iso'][:5])
     datepart = localdata[circ]['utc_iso'][5:]
     if int(year) >= 1883:
         utc = dateutil.parser.isoparse(f"{year}{datepart}")
         local = utc.astimezone(ZoneInfo(tz))
-        localdata[circ]['local_time'] = local.strftime('%-I:%M:%S %p %Z')
+        localdata[circ]['local_tz'] = local.strftime('%Z')[0] + local.strftime('%Z')[-1]
+        localdata[circ]['local_time'] = local.strftime('%-I:%M:%S %p')
+        localdata[circ]['local_date'] = local.strftime('%a %b %-d, %Y')
     else:
         utc = dateutil.parser.isoparse(f"1886{datepart}")
         local = utc + datetime.timedelta(seconds=round(4 * 60 * lon))
