@@ -1,0 +1,13 @@
+**.ini
+**.csv
+logs/**
+old/**
+caches/**
+reports/**
+venv/**
+.DS_Store
+.idea/**
+**.template
+__pycache__/
+circumstances/__pycache__/
+metreport.py
