@@ -3,6 +3,8 @@ from selenium import webdriver
 from skyfield.api import Loader, load
 from selenium.webdriver.support.ui import Select, WebDriverWait
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+
 
 ts = load.timescale()
 
@@ -13,7 +15,7 @@ pd.set_option('display.width', 1000)
 MOON_RADIUS_KM = 1737.4
 SUN_RADIUS_KM = 695700
 months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-eclipse_abbrev={'A': 'annular', 'T': 'total', 'H': 'hybrid', 'P': 'partial'}
+eclipse_abbrev = {'A': 'annular', 'T': 'total', 'H': 'hybrid', 'P': 'partial'}
 
 
 def load_ephemeris(year=2023):
@@ -36,8 +38,6 @@ def load_ephemeris(year=2023):
     eph = load(de)
     m = eph['moon']
     jkl = str(eph).split("\n")
-    print(year, de, jkl[1])
-
     return eph
 
 
@@ -61,23 +61,27 @@ def directional_DMS_coordinates(lat, lon):
         EW = 'E'
     return EW, NS, latd, latm, lats, lond, lonm, lons
 
+
 def check_non_zero(x):
     return x > 0
 
 
 def get_driver():
     driver = None
-    # os.system("ps -ef | grep -i Chrome | awk '{ print $2 }' | xargs kill")
+    # import os
+    # os.system("ps -ef | grep -i Chrome | awk '{ print $2 }' | grep -v grep | xargs kill")
 
     options = webdriver.ChromeOptions()
-    # options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument(r"--user-data-dir=/Users/trice/Library/Application Support/Google/Chrome")
-    options.add_argument(r'--profile-directory=Profile 10')
+
+    options.add_argument("--headless")
+    # options.add_argument('--headless=new')
+    # options.add_argument("--no-sandbox")
+    # options.add_argument(r"--user-data-dir=/Users/trice/Library/Application Support/Google/Chrome")
+    # options.add_argument(r'--profile-directory=Profile 3')
     driver = webdriver.Chrome(options=options)
     url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
     driver.get(url)
-    #<input type="text" name="loc_name" size="30" onchange="newloc()">
+    # <input type="text" name="loc_name" size="30" onchange="newloc()">
     table = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.NAME, 'loc_name')))
     return driver
 

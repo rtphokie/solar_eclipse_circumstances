@@ -1,13 +1,11 @@
 import re
 from pprint import pprint
 
-import dateutil.parser
-import requests
 import requests_cache
 from bs4 import BeautifulSoup
-from skyfield import api
 
 session = requests_cache.CachedSession(f"caches/xhttp.sqllite")
+
 
 def get_jubier_circumstances(angle=0, eclipse="+20231014", height=0, latstr="", lonstr="", DEBUG=False):
     '''
@@ -103,7 +101,14 @@ def get_google_circ_parse_table_3(iop, thistable):
         day = int(date[8:10])
         hour = int(time[:2])
         minute = int(time[3:5])
-        second = float(time[6:])
+        if len(time) == 5:
+            second = 0
+        else:
+            try:
+                second = float(time[6:].replace('*', ''))
+            except Exception as e:
+                print(e)
+
         # iop[eventshort]['tt'] = ts.utc(year, month, day, hour, minute, second)
         # iop[eventshort]['ordinal'] = iop[eventshort]['tt'].toordinal()
 

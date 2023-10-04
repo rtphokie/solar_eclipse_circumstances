@@ -9,13 +9,14 @@ import dateutil.parser
 import pandas as pd
 import requests_cache
 from bs4 import BeautifulSoup
+from geographiclib.geodesic import Geodesic
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 from skyfield.api import load
 from timezonefinder import TimezoneFinder
-
-from utils import get_driver, directional_DMS_coordinates
+# from utils import directional_DMS_coordinates, get_driver, months
+from circumstances.utils import directional_DMS_coordinates, get_driver, months
 
 ts = load.timescale()
 tf = TimezoneFinder()  # reuse
@@ -24,9 +25,10 @@ tf = TimezoneFinder()  # reuse
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 
-MOON_RADIUS_KM = 1737.4
-SUN_RADIUS_KM = 695700
-months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+# MOON_RADIUS_KM = 1737.4
+# SUN_RADIUS_KM = 695700
+# months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 
 # useful URLS
@@ -46,7 +48,7 @@ class solar_eclipse_local(object):
         self.key = None
         self.cachedir = './caches'
         self.session = requests_cache.CachedSession(f"{self.cachedir}/http.sqllite")
-        self.logger = self._setup_logging('local', level=logginglevel)
+        # self.logger = self._setup_logging('local', level=logginglevel)
         self.driver = driver
 
         if self.ele is None:
@@ -54,27 +56,26 @@ class solar_eclipse_local(object):
 
         if self.timezone is None:
             self.timezone = tf.timezone_at(lng=lon, lat=lat)
-            self.logger.debug(f"found {self.name} in the {self.timezone} timezone")
+            # self.logger.debug(f"found {self.name} in the {self.timezone} timezone")
 
         self.key = f"{lat},{lon},{ele}"
-        self.logger.info('-' * 20)
-        self.logger.info(f"instantiated {self.name} ({self.lat},{self.lon}), ele {self.ele}m in {self.timezone}")
+        # self.logger.info(f"instantiated {self.name} ({self.lat},{self.lon}), ele {self.ele}m in {self.timezone}")
 
     def _get_elevation(self, lat, lon):
         url = f'https://api.opentopodata.org/v1/test-dataset?locations={lat},{lon}'
-        r = self.session.get(url)
-        data_elevation = r.json()
         try:
-            elevation = round(data_elevation['results'][0]['elevation'])
-            self.logger.debug(f"found elevation for {self.name} of {self.ele} meters, from cache {r.from_cache}")
+            r = self.session.get(url)
+            # self.logger.debug(f"{lat},{lon},{r.from_cache},{r.status_code}")
         except Exception as e:
-            elevation = 0
-            self.logger.warning(f"failed to find elevation for {self.name}: {e}")
+            print(f"error getting elevation for {lat},{lon},{e}")
         try:
-            if not r.from_cache:
-                self.logger.warning(f"found elevation for {self.name} not from cache")
-        except Exception:
-            pass
+            data_elevation = r.json()
+            elevation = round(data_elevation['results'][0]['elevation'])
+            # self.logger.debug(f"found elevation for {self.name} of {self.ele} meters, from cache {r.from_cache}")
+        except Exception as e:
+            print(f"setting ele 0 for {lat},{lon},{e}")
+            elevation = 0
+            # self.logger.warning(f"failed to find elevation for {self.name}: {e}")
         return elevation
 
     def _setup_logging(self, name,
@@ -84,7 +85,7 @@ class solar_eclipse_local(object):
         logger = logging.getLogger(name)
         logger.setLevel(level)
         formatter = Formatter(logformat, datefmt=datefmt)
-        file_handler = RotatingFileHandler('./logs/local.log', maxBytes=1024, backupCount=5)
+        file_handler = RotatingFileHandler('./logs/local.log', maxBytes=1000000, backupCount=5)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
         logging.getLogger("requests_cache").setLevel(logging.WARNING)
@@ -101,11 +102,11 @@ class solar_eclipse_local(object):
             fp.close()
         except Exception as e:
             data = {}
-            self.logger.warning(f"{e}")
+            # self.logger.warning(f"{e}")
         if self.key not in data:
             years_not_in_cache = years.copy()
         else:
-            self.logger.debug(f"{len(data[self.key]['centuries_checked'])} centuries in cache")
+            # self.logger.debug(f"{len(data[self.key]['centuries_checked'])} centuries in cache")
             for year in years:
                 century = int(year / 100)
                 if century in data[self.key]['centuries_checked']:
@@ -124,11 +125,11 @@ class solar_eclipse_local(object):
         if years is None:
             years = list(range(-1401, 3000, 100))
         data, years_in_cache, years_not_in_cache, filename_pickle = self._get_cache_local(years=years)
-        self.logger.debug(f"{years_in_cache} in cache for {self.name}")
-        self.logger.debug(f"{years_not_in_cache} not in cache for {self.name}")
+        # self.logger.debug(f"{years_in_cache} in cache for {self.name}")
+        # self.logger.debug(f"{years_not_in_cache} not in cache for {self.name}")
 
         if len(years_not_in_cache) > 0:
-            self.logger.info(f"fetching {years_not_in_cache} for {self.name}")
+            # self.logger.info(f"fetching {years_not_in_cache} for {self.name}")
             EW, NS, latd, latm, lats, lond, lonm, lons = directional_DMS_coordinates(self.lat, self.lon)
             url = 'https://eclipse.gsfc.nasa.gov/JSEX/JSEX-USA.html'
             if self.driver is None:
@@ -142,7 +143,7 @@ class solar_eclipse_local(object):
                 button_no = int((year / 100) + 15)
                 row = int(button_no / 5) + 2
                 col = (button_no % 5) + 1
-                self.logger.debug(f"fetching {year}, button ({row},{col}) for {self.name}")
+                # self.logger.debug(f"fetching {year}, button ({row},{col}) for {self.name}")
                 eclipses, by_year = click_century_buttons(self.driver, self.ele, row=row, column=col)
                 data[self.key]['eclipses'].update(eclipses)
                 data[self.key]['by_year'].update(by_year)
@@ -204,7 +205,8 @@ class solar_eclipse_local(object):
                 prevnextevents[baseeclipsetype]['last_in_path'] = localdata
             elif prevnextevents[baseeclipsetype]['next_in_path'] is None and not label.startswith(targetdate):
                 prevnextevents[baseeclipsetype]['next_in_path'] = localdata
-        elif (baseeclipsetype == 'T' and localdata['obs'] >= .9) or (baseeclipsetype in ['H','A'] and localdata['obs'] >= .8):
+        elif (baseeclipsetype == 'T' and localdata['obs'] >= .9) or (
+                baseeclipsetype in ['H', 'A'] and localdata['obs'] >= .8):
             # total eclipses above 90% obscuration or annular/hybrid above 80%
             nearpath[baseeclipsetype][label] = localdata
             if label[:14].replace('+', '~') < targetdate[:14].replace('+', '~') and not label.startswith(
@@ -354,6 +356,7 @@ def get_canon_Espenak(year_start=-1499, year_end=3000, force=False):
                 otherdates[tdp1] = thisdict['date_ut1']  # the international dateline
                 thisdict['utc'] = td
                 results[thisdict['date_ut1']] = thisdict
+    s.close()
     fp = open(filename_pickle, 'wb')
     pickle.dump({'results': results, 'otherdates': otherdates}, fp)
     fp.close()
@@ -382,6 +385,15 @@ def get_canon_page(s, year0):
     url = f'https://eclipsewise.com/solar/SEcatalog/SE{neg_from}{abs(year0):04}-{neg_to}{abs(year0 + 99):04}.html'
     r = s.get(url)
     return r, url
+
+
+def dms2dd(s):
+    degrees, s2 = s.split("°")
+    minutes, direction = s2.split("'")
+    dd = float(degrees) + float(minutes) / 60
+    if direction == 'W' or direction == 'S':
+        dd *= -1
+    return round(dd, 2)
 
 
 def parse_espenak_row(cells):
@@ -474,6 +486,7 @@ def get_canon_GSFC(year_start=-1499, year_end=3000):
             fp = open(filename_pickle, 'wb')
             pickle.dump(data, fp)
             fp.close()
+        s.close()
     fp = open(filename_pickle, 'wb')
     pickle.dump(data, fp)
     fp.close()
@@ -511,13 +524,19 @@ def gsfc_process_local_circ_fields(attr, day, month, result_row, year):
     if result_row[timeattr] is None:
         result_row[attr] = None
     else:
+        if 'NaN:NaN' in result_row[f"{attr}_time"]:
+            # compensate for error present on both Fred's and GSFC site.
+            result_row[f"{attr}_time"] = result_row[f"mid_time"]
         if '(' in result_row[f"{attr}_time"]:
             HMstr, _ = result_row[f"{attr}_time"].split('(')
             H, M = HMstr.split(':')
             S = 0
         else:
             H, M, S = result_row[f"{attr}_time"].split(':')
-        tt = ts.utc(year, month, day, int(H), int(M), int(S))
+        try:
+            tt = ts.utc(year, month, day, int(H), int(M), int(S))
+        except:
+            kl=1
         utciso = tt.utc_iso()
         atoms = utciso.split('-')
         newyear = int(atoms[-3])
@@ -585,7 +604,13 @@ def process_local_circ_times(circ, label, localdata, lon, tz):
         localdata[circ]['local_time'] = local.strftime('%-I:%M:%S %p')
         localdata[circ]['local_date'] = local.strftime('%a %b %-d, %Y')
     else:
-        utc = dateutil.parser.isoparse(f"1886{datepart}")
+        datepart=datepart.replace('02-29','02-28')
+        try:
+            utc = dateutil.parser.isoparse(f"1886{datepart}")
+        except Exception as e:
+            print(e)
+            pass
+            lkjasdfjkl=1
         local = utc + datetime.timedelta(seconds=round(4 * 60 * lon))
         localdata[circ]['local_time'] = local.strftime('%-I:%M:%S %p LMT')
     if year < 0:
@@ -596,3 +621,67 @@ def process_local_circ_times(circ, label, localdata, lon, tz):
     if circ == 'c1':
         label = localdata[circ]['local_iso']
     return label
+
+
+def get_eclipse_path(name='+2023-10-14', eclipsetype='A'):
+    dt = dateutil.parser.isoparse(name.replace('+', ''))
+    cent = int(dt.year / 100)
+    datestr = dt.strftime('%Y%b%d')
+
+    url = f"https://eclipsewise.com/solar/SEpath/{cent}01-{cent + 1}00/SE{datestr}{eclipsetype}path.html"
+    s = requests_cache.CachedSession('caches/espenak_eclipse_cache.sqlite')
+    r = s.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    datatab = soup.find('table', {'class': 'datatab'})
+    results = {}
+    for row in datatab.find_all('tr')[4:-1]:
+        cells = row.find_all('td')
+        results[cells[0].text] = {
+            'northern': {'lat': dms2dd(cells[1].text),
+                         'lon': dms2dd(cells[2].text)},
+            'southern': {'lat': dms2dd(cells[3].text),
+                         'lon': dms2dd(cells[4].text)},
+            'central': {'lat': dms2dd(cells[5].text),
+                        'lon': dms2dd(cells[6].text)},
+            'moon:sun ratio': float(cells[7].text),
+            'sun altitude': int(cells[8].text.replace("°", '')),
+            'sun azimuth': int(cells[9].text.replace("°", '')),
+            'path width km': int(cells[10].text.strip().replace(" km", '')),
+            'duration': cells[11].text,
+        }
+        results[cells[0].text]['path width mi'] = round(results[cells[0].text]['path width km'] * 0.621371)
+    return results
+
+
+def degrees_to_cardinal(d):
+    '''
+    note: this is highly approximate...
+    '''
+    dirs_long = ["north", "north-northeast", "northeast", "east-northeast",
+                 "east", "east-southeast", "southeast", "south-southeast",
+                 "south", "south-southwest", "southwest", "west-southwest",
+                 "west", "west-northwest", "northwest", "north-northwest"]
+    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    ix = int((d + 11.25) / 22.5)
+    return dirs[ix % 16], dirs_long[ix % 16]
+
+
+def distance_to_path(lat, lon, name='+2023-10-14', eclipsetype='A'):
+    path_data = get_eclipse_path(name=name, eclipsetype=eclipsetype)
+    distances = []
+    for k, row in path_data.items():
+        r = Geodesic.WGS84.Inverse(lat, lon, row['central']['lat'], row['central']['lon'])
+        row['distance_km'] = round(r["s12"] / 1000)
+        row['distance_mi'] = round(r["s12"] / 1609.34)
+        row['bearing'] = r["azi1"]
+
+        distances.append(row['distance_mi'])
+    mindist = min(distances)
+    for k, row in path_data.items():
+        if row['distance_mi'] == mindist:
+            bearing_deg = row['bearing']
+            if bearing_deg < 0:
+                bearing_deg+=360
+            bearing_dir = degrees_to_cardinal(bearing_deg)
+    return path_data, mindist, bearing_deg, bearing_dir
