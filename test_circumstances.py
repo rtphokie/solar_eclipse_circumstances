@@ -1,10 +1,10 @@
-import configparser
+import logging
 import logging
 import unittest
 from pprint import pprint
 
-from circumstances import solar_eclipse_local, get_eclipse_path, distance_to_path
-from metreport import report_20231013, cities_csv, main
+from circumstances import solar_eclipse_local, get_eclipse_path, distance_to_path, get_canon_Espenak
+from metreport import report_20231013, main
 
 
 class EclipseCircumstances(unittest.TestCase):
@@ -58,27 +58,46 @@ class EclipseCircumstances(unittest.TestCase):
                                                                   lon=-78.63760)
         print(mindist, bearing, bearing_dir)
 
-
     def test_report(self):
+        # lat = 36.96
+        # market = Bowling Green
+        # city = Bowling Green, KY
+        # state = KY
+        # tz = US/Central
+        # lon = -86.49
+        # ele = 159
+        s, driver = report_20231013(cityname='Bowling Green, KY', DMA='Bowling Green', lat=36.96, lon=-86.49, generate_csv=True)
         driver = None
-        s, driver = report_20231013(cityname='Albuquerque, NM', DMA='Albuquerque', lat=35.0844, lon=-106.6504,
-                                    driver=driver)
+        return
+        s, driver = report_20231013(cityname='Albuquerque, NM', DMA='Albuquerque-Santa Fe', lat=35.0844, lon=-106.6504,
+                                    driver=driver, generate_csv=True)
         self.assertTrue('Maximum eclipse: 10:36:52 AM when the Sun will be 89.6% obscured by the Moon' in s)
 
-        s, driver = report_20231013(cityname='Raleigh, NC', DMA='Raleigh-Durham (Fayetteville)', lat=35.7945, lon=-78.63760,
-                                    driver=driver)
+        s, driver = report_20231013(cityname='Raleigh, NC', DMA='Raleigh-Durham (Fayetteville)', lat=35.7945,
+                                    lon=-78.63760,
+                                    driver=driver, generate_csv=True)
         self.assertTrue(
-            'Between 1500 BC and 3000 AD, a total of 1599 solar eclipses have been visible from the area.' in s)
-
-        s, driver = report_20231013(cityname='Houston, TX', DMA='Houston', lat=29.7604, lon=-95.3698, driver=driver)
-        self.assertTrue('The ~110 mile wide path of annularity is 182 miles to the southwest')
-        cities_csv('Houston')
-
-        s, driver = report_20231013(cityname='Portland, OR', DMA='Portland', lat=45.5152, lon=-122.6784, driver=driver)
-
+            'Between 1500 BC and 3000 AD, a total of 1599 solar eclipses have been visible from' in s)
+    #
+    #     s, driver = report_20231013(cityname='Houston, TX', DMA='Houston', lat=29.7604, lon=-95.3698, driver=driver)
+    #     self.assertTrue('The ~110 mile wide path of annularity is 182 miles to the southwest')
+    #
+    #     s, driver = report_20231013(cityname='Portland, OR', DMA='Portland', lat=45.5152, lon=-122.6784, driver=driver)
+    #
     def test_generate_reports(self):
         main()
 
+    def test_canon_Espenak(self):
+        canon, otherdates = get_canon_Espenak()
+        for k, v in canon.items():
+            if k.startswith('-'):
+                continue
+            if 'E' in v['ge_lon']:
+                continue
+            lon=int(v['ge_lon'].replace('W', ''))*-1
+            if lon > -180 and v['eclipse_type'] == 'A':
+                print (k, v['eclipse_type'], v['ge_lat'], v['ge_lon'])
+                print(f"https://eclipsewise.com/solar/SEping/2001-2100/SE2012-05-20A.gif")
 
 if __name__ == '__main__':
     unittest.main()

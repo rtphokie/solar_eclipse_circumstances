@@ -144,20 +144,20 @@ def get_jubier_circumstances(angle=0, eclipse="+20231014", height=0, latstr="", 
     '''
 
     if DEBUG:
-        fp = open("caches/foo.xml")
+        fp = open("../caches/foo.xml")
         sa = fp.readlines()
         fp.close()
         s = ' '.join(sa)
     else:
         s = fetch_google_circ(eclipse, height, latstr, lonstr)
-    fp = open('caches/foo.xml', 'w')
+    fp = open('../caches/foo.xml', 'w')
     fp.writelines(s)
     fp.close()
     if 'NO&nbsp;SOLAR&nbsp;ECLIPSE' in s:
         return None
     jkl = s.split('<![CDATA[')
     html, _ = jkl[2].split(' ]]')
-    fp = open('caches/foo.html', 'w')
+    fp = open('../caches/foo.html', 'w')
     fp.writelines(s)
     fp.close()
     soup = BeautifulSoup(html, 'html.parser')

@@ -1,14 +1,10 @@
-import datetime
 import unittest
 from pprint import pprint
-from zoneinfo import ZoneInfo
 
-import dateutil.parser
 import pandas as pd
 from skyfield import api
 
-from circumstances import solar_eclipse_local
-from test_tools import get_jubier_circumstances, get_usno_circumstances
+from old.test_tools import get_jubier_circumstances, get_usno_circumstances
 
 ts = api.load.timescale()
 pd.set_option('display.max_rows', None)
